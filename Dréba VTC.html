@@ -1887,8 +1887,12 @@
                 <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     <div class="lg:col-span-2">
                         <div class="bg-white border rounded-lg overflow-hidden">
-                            <div class="p-4 bg-gray-50 border-b">
+                            <div class="p-4 bg-gray-50 border-b flex items-center justify-between">
                                 <h4 class="font-semibold">Carte des chauffeurs en temps réel</h4>
+                                <div id="realtimeStatus" class="flex items-center space-x-2">
+                                    <span class="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                                    <span class="text-xs text-gray-600">Suivi actif</span>
+                                </div>
                             </div>
                             <div id="adminMap" style="height: 500px; width: 100%;"></div>
                         </div>
@@ -3598,21 +3602,68 @@
 
             // Mettre à jour les localisations en temps réel via Firestore
             // Écouter les changements de localisation en temps réel
-            db.collection('drivers')
-                .where('isOnline', '==', true)
-                .onSnapshot((snapshot) => {
-                    snapshot.docChanges().forEach((change) => {
-                        if (change.type === 'modified') {
+            let realTimeListener = null;
+            
+            // Démarrer l'écoute en temps réel
+            function startRealTimeTracking() {
+                // Arrêter l'ancien listener s'il existe
+                if (realTimeListener) {
+                    realTimeListener();
+                }
+                
+                realTimeListener = db.collection('drivers')
+                    .where('isOnline', '==', true)
+                    .onSnapshot((snapshot) => {
+                        console.log('🔄 Mise à jour temps réel:', snapshot.docChanges().length, 'changements');
+                        
+                        snapshot.docChanges().forEach((change) => {
                             const driverData = change.doc.data();
-                            if (driverData.location) {
-                                updateDriverLocationOnMap({
-                                    driverId: change.doc.id,
-                                    location: driverData.location
-                                });
+                            const driverId = change.doc.id;
+                            
+                            if (change.type === 'added') {
+                                // Nouveau chauffeur connecté
+                                console.log('✅ Nouveau chauffeur connecté:', driverId);
+                                if (driverData.location) {
+                                    addDriverMarkerToAdminMap({
+                                        driverId: driverId,
+                                        ...driverData,
+                                        isActive: true
+                                    });
+                                }
+                            } else if (change.type === 'modified') {
+                                // Mise à jour de localisation ou statut
+                                if (driverData.location) {
+                                    updateDriverLocationOnMap({
+                                        driverId: driverId,
+                                        location: driverData.location,
+                                        driverData: driverData
+                                    });
+                                } else if (!driverData.isOnline) {
+                                    // Chauffeur déconnecté
+                                    removeDriverMarkerFromMap(driverId);
+                                }
+                            } else if (change.type === 'removed') {
+                                // Chauffeur supprimé ou déconnecté
+                                console.log('❌ Chauffeur déconnecté:', driverId);
+                                removeDriverMarkerFromMap(driverId);
                             }
-                        }
+                        });
+                    }, (error) => {
+                        console.error('❌ Erreur suivi temps réel:', error);
                     });
-                });
+            }
+            
+            // Démarrer le suivi en temps réel
+            startRealTimeTracking();
+            
+            // Mettre à jour l'indicateur de statut
+            const realtimeStatus = document.getElementById('realtimeStatus');
+            if (realtimeStatus) {
+                realtimeStatus.innerHTML = `
+                    <span class="inline-block w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                    <span class="text-xs text-green-600 font-semibold">Suivi temps réel actif</span>
+                `;
+            }
 
             // Rafraîchir les données toutes les 30 secondes
             setInterval(() => {
@@ -3734,27 +3785,118 @@
         function updateDriverLocationOnMap(data) {
             if (!adminMap || !data.driverId || !data.location) return;
             
-            // Trouver le marqueur existant
-            const markerIndex = adminMarkers.findIndex(m => m.driverId === data.driverId);
-            
-            // Le backend peut envoyer location.latitude/longitude ou location.lat/lng
+            // Extraire les coordonnées
             const lat = data.location.latitude || data.location.lat;
             const lng = data.location.longitude || data.location.lng;
             
             if (!lat || !lng) return;
+            
+            // Trouver le marqueur existant
+            const markerIndex = adminMarkers.findIndex(m => m.driverId === data.driverId);
             
             if (markerIndex !== -1) {
                 // Mettre à jour la position du marqueur existant
                 const marker = adminMarkers[markerIndex].marker;
                 if (marker) {
                     marker.setLatLng([lat, lng]);
-                    // Mettre à jour aussi le popup avec les nouvelles coordonnées
-                    marker.bindPopup(marker.getPopup().getContent());
+                    
+                    // Mettre à jour le popup avec les nouvelles informations
+                    if (data.driverData) {
+                        const popupContent = `
+                            <div style="text-align: center;">
+                                <strong>${data.driverData.firstName || ''} ${data.driverData.lastName || ''}</strong><br>
+                                ID: ${data.driverId}<br>
+                                Téléphone: +227${data.driverData.phone || ''}<br>
+                                Type: ${data.driverData.serviceType || ''}<br>
+                                <button onclick="contactDriver('${data.driverData.phone || ''}')" class="mt-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">
+                                    <i class="fas fa-phone mr-1"></i>Appeler
+                                </button>
+                            </div>
+                        `;
+                        marker.bindPopup(popupContent);
+                    }
                 }
             } else {
                 // Créer un nouveau marqueur si le chauffeur n'était pas sur la carte
-                // (nécessite de recharger les données du chauffeur)
-                loadDriversForAdmin();
+                if (data.driverData) {
+                    addDriverMarkerToAdminMap({
+                        driverId: data.driverId,
+                        ...data.driverData,
+                        isActive: true
+                    });
+                } else {
+                    // Recharger les données si on n'a pas les infos complètes
+                    loadDriversForAdmin();
+                }
+            }
+        }
+        
+        // Ajouter un marqueur de chauffeur sur la carte admin
+        function addDriverMarkerToAdminMap(driver) {
+            if (!adminMap || !driver.location || !driver.driverId) return;
+            
+            // Vérifier si le marqueur existe déjà
+            const existingIndex = adminMarkers.findIndex(m => m.driverId === driver.driverId);
+            if (existingIndex !== -1) {
+                // Mettre à jour le marqueur existant
+                updateDriverLocationOnMap({
+                    driverId: driver.driverId,
+                    location: driver.location,
+                    driverData: driver
+                });
+                return;
+            }
+            
+            // Couleur selon le type de service
+            let iconColor = '#10b981'; // Vert par défaut (Simple)
+            if (driver.serviceType === 'standard' || driver.serviceType === 'STANDARD') {
+                iconColor = '#f59e0b'; // Orange
+            } else if (driver.serviceType === 'vip' || driver.serviceType === 'VIP') {
+                iconColor = '#8b5cf6'; // Violet
+            }
+            
+            const customIcon = L.divIcon({
+                className: 'custom-marker',
+                html: `<div style="background: ${iconColor}; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 3px solid white; animation: pulse 2s infinite;">
+                    <i class="fas fa-taxi"></i>
+                </div>`,
+                iconSize: [40, 40],
+                iconAnchor: [20, 20]
+            });
+
+            const lat = driver.location.latitude || driver.location.lat;
+            const lng = driver.location.longitude || driver.location.lng;
+            
+            if (!lat || !lng) return;
+
+            const marker = L.marker([lat, lng], { icon: customIcon })
+                .addTo(adminMap)
+                .bindPopup(`
+                    <div style="text-align: center;">
+                        <strong>${driver.firstName || ''} ${driver.lastName || ''}</strong><br>
+                        ID: ${driver.driverId}<br>
+                        Téléphone: +227${driver.phone || ''}<br>
+                        Type: ${driver.serviceType || ''}<br>
+                        <button onclick="contactDriver('${driver.phone || ''}')" class="mt-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">
+                            <i class="fas fa-phone mr-1"></i>Appeler
+                        </button>
+                    </div>
+                `);
+
+            adminMarkers.push({ marker, driverId: driver.driverId });
+        }
+        
+        // Supprimer un marqueur de la carte
+        function removeDriverMarkerFromMap(driverId) {
+            if (!adminMap) return;
+            
+            const markerIndex = adminMarkers.findIndex(m => m.driverId === driverId);
+            if (markerIndex !== -1) {
+                const markerData = adminMarkers[markerIndex];
+                if (markerData.marker && adminMap.hasLayer(markerData.marker)) {
+                    adminMap.removeLayer(markerData.marker);
+                }
+                adminMarkers.splice(markerIndex, 1);
             }
         }
 
@@ -3818,7 +3960,7 @@
 
                         // Ajouter le marqueur sur la carte si actif et avec localisation
                         if (driver.isActive && driver.location && adminMap) {
-                            addDriverMarker(driver);
+                            addDriverMarkerToAdminMap(driver);
                         }
                     });
                 }
@@ -3828,35 +3970,8 @@
             }
         }
 
-        // Ajouter un marqueur de chauffeur sur la carte admin
-        function addDriverMarker(driver) {
-            if (!adminMap || !driver.location) return;
-
-            const customIcon = L.divIcon({
-                className: 'custom-marker',
-                html: `<div style="background: #10b981; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 3px solid white;">
-                    <i class="fas fa-taxi"></i>
-                </div>`,
-                iconSize: [40, 40],
-                iconAnchor: [20, 20]
-            });
-
-            const marker = L.marker([driver.location.lat, driver.location.lng], { icon: customIcon })
-                .addTo(adminMap)
-                .bindPopup(`
-                    <div style="text-align: center;">
-                        <strong>${driver.firstName} ${driver.lastName}</strong><br>
-                        ID: ${driver.driverId}<br>
-                        Téléphone: ${driver.phone}<br>
-                        Type: ${driver.serviceType}<br>
-                        <button onclick="contactDriver('${driver.phone}')" class="mt-2 px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700">
-                            <i class="fas fa-phone mr-1"></i>Appeler
-                        </button>
-                    </div>
-                `);
-
-            adminMarkers.push({ marker, driverId: driver.driverId });
-        }
+        // L'ancienne fonction addDriverMarker a été remplacée par addDriverMarkerToAdminMap
+        // qui inclut les couleurs selon le type de service et une meilleure gestion
 
         // Filtrer les chauffeurs (filtrage côté client)
         function filterDrivers(searchTerm) {
@@ -3908,39 +4023,30 @@
             const adminPassword = 'admin123';
 
             try {
-                const response = await fetch(`${API_BASE_URL}/admin/drivers/nearest`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'x-admin-password': adminPassword
-                    },
-                    body: JSON.stringify({
-                        pickupLocation,
-                        taxiType: taxiType || 'all'
-                    })
-                });
+                // Trouver le chauffeur le plus proche via Firebase
+                const taxiTypeForSearch = taxiType && taxiType !== 'all' ? taxiType.toUpperCase() : null;
+                const drivers = await findAvailableDrivers(pickupLocation, taxiTypeForSearch, 1);
+                
+                if (drivers && drivers.length > 0) {
+                    const driver = drivers[0]; // Le premier est le plus proche (trié par distance)
 
-                const result = await response.json();
-
-                if (response.ok && result.success && result.driver) {
-                    const driver = result.driver;
-
-                    // Créer la réservation
-                    const reservationResponse = await fetch(`${API_BASE_URL}/reservations/create`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'x-admin-password': adminPassword
+                    // Créer la réservation dans Firebase
+                    const reservationData = {
+                        clientPhone: clientPhone || '87776776',
+                        pickupAddress: pickupAddress,
+                        taxiType: taxiType || 'simple',
+                        pickupLocation: {
+                            latitude: pickupLocation.latitude,
+                            longitude: pickupLocation.longitude
                         },
-                        body: JSON.stringify({
-                            clientPhone: clientPhone || '87776776',
-                            pickupAddress,
-                            taxiType: taxiType || 'simple',
-                            pickupLocation
-                        })
-                    });
-
-                    const reservationResult = await reservationResponse.json();
+                        driverId: driver.driverId,
+                        status: 'pending',
+                        createdAt: getCurrentTimestamp(),
+                        updatedAt: getCurrentTimestamp()
+                    };
+                    
+                    await db.collection('bookings').add(reservationData);
+                    console.log('✅ Réservation créée dans Firebase');
 
                     // Afficher les informations du chauffeur assigné
                     const assignedDriverInfo = document.getElementById('assignedDriverInfo');
@@ -3951,7 +4057,7 @@
                         assignedDriverDetails.innerHTML = `
                             <p><strong>Nom:</strong> ${driver.firstName} ${driver.lastName}</p>
                             <p><strong>ID:</strong> ${driver.driverId}</p>
-                            <p><strong>Téléphone:</strong> ${driver.phone}</p>
+                            <p><strong>Téléphone:</strong> +227${driver.phone}</p>
                             <p><strong>Type:</strong> ${driver.serviceType}</p>
                             <p><strong>Véhicule:</strong> ${driver.vehicleBrand} ${driver.vehicleColor || ''}</p>
                             ${driver.distance ? `<p><strong>Distance:</strong> ${driver.distance} km</p>` : ''}
@@ -3968,10 +4074,10 @@
                         }
                     }
                 } else {
-                    alert(result.error || 'Aucun chauffeur disponible pour le moment.');
+                    alert('Aucun chauffeur disponible pour le moment.');
                 }
             } catch (error) {
-                console.error('Erreur:', error);
+                console.error('❌ Erreur:', error);
                 alert('Erreur lors de la recherche du chauffeur. Veuillez réessayer.');
             }
         }
@@ -3985,49 +4091,27 @@
 
         // Afficher la localisation d'un chauffeur
         window.showDriverLocation = async function(driverId) {
-            const adminPassword = 'admin123';
-            
             try {
-                const response = await fetch(`${API_BASE_URL}/drivers/${driverId}`, {
-                    headers: {
-                        'x-admin-password': adminPassword
-                    }
-                });
+                // Récupérer le chauffeur depuis Firebase
+                const driverDoc = await db.collection('drivers').doc(driverId).get();
                 
-                if (response.ok) {
-                    const driver = await response.json();
+                if (driverDoc.exists) {
+                    const driver = driverDoc.data();
                     
-                    if (driver.latitude && driver.longitude && adminMap) {
-                        adminMap.setView([driver.latitude, driver.longitude], 15);
+                    if (driver.location && driver.location.lat && driver.location.lng && adminMap) {
+                        adminMap.setView([driver.location.lat, driver.location.lng], 15);
                     }
+                } else {
+                    alert('Chauffeur introuvable.');
                 }
             } catch (error) {
-                console.error('Erreur:', error);
+                console.error('❌ Erreur:', error);
+                alert('Erreur lors de la récupération de la localisation du chauffeur.');
             }
         };
 
-        // Écouter les mises à jour de localisation en temps réel via WebSocket
-        if (typeof initSocket === 'function') {
-            initSocket();
-        }
-        
-        if (window.socket) {
-            window.socket.on('driver:location-update', (data) => {
-                // Mettre à jour le marqueur sur la carte admin
-                if (adminMap && data.driverId && data.location) {
-                    const existingMarker = adminMarkers.find(m => m.driverId === data.driverId);
-                    
-                    if (existingMarker && existingMarker.marker) {
-                        // Mettre à jour la position du marqueur
-                        existingMarker.marker.setLatLng([data.location.lat, data.location.lng]);
-                    } else {
-                        // Recharger la liste pour ajouter le nouveau marqueur
-                        loadDriversForAdmin();
-                    }
-                }
-            });
-
-            window.socket.on('driver:offline', (data) => {
+        // Le suivi en temps réel est maintenant géré par Firebase onSnapshot
+        // Plus besoin de WebSocket - le code a été remplacé par Firebase
                 // Retirer le marqueur du chauffeur déconnecté
                 if (data.driverId) {
                     const markerIndex = adminMarkers.findIndex(m => m.driverId === data.driverId);
@@ -4395,6 +4479,147 @@
         }
 
         // ============================================
+        // Fonctions Helper pour Firebase
+        // ============================================
+        
+        // Fonction pour calculer la distance entre deux points (formule de Haversine)
+        function calculateDistance(lat1, lon1, lat2, lon2) {
+            const R = 6371; // Rayon de la Terre en km
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = 
+                Math.sin(dLat/2) * Math.sin(dLat/2) +
+                Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                Math.sin(dLon/2) * Math.sin(dLon/2);
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            return R * c; // Distance en km
+        }
+
+        // Fonction pour trouver les chauffeurs disponibles via Firebase
+        async function findAvailableDrivers(pickupLocation, taxiType, limit = 10) {
+            try {
+                // Vérifier que Firebase est initialisé
+                if (typeof db === 'undefined' || !db) {
+                    const error = new Error('Firebase n\'est pas initialisé. Veuillez rafraîchir la page.');
+                    error.type = 'FIREBASE_NOT_INITIALIZED';
+                    throw error;
+                }
+
+                console.log('🔍 Recherche de chauffeurs disponibles...', {
+                    pickupLocation,
+                    taxiType,
+                    limit
+                });
+
+                // Récupérer TOUS les chauffeurs (évite les problèmes d'index)
+                // On filtrera côté client pour isOnline, location, etc.
+                let driversSnapshot;
+                try {
+                    driversSnapshot = await db.collection('drivers').get();
+                    console.log('✅ Chauffeurs récupérés:', driversSnapshot.size);
+                } catch (firestoreError) {
+                    console.error('❌ Erreur Firestore:', firestoreError);
+                    
+                    // Vérifier si c'est une erreur de permissions
+                    if (firestoreError.code === 'permission-denied' || firestoreError.message.includes('permission')) {
+                        const error = new Error('Permissions Firestore insuffisantes. Vérifiez les règles Firestore dans la console Firebase.');
+                        error.type = 'PERMISSION_DENIED';
+                        error.originalError = firestoreError;
+                        throw error;
+                    }
+                    
+                    // Vérifier si c'est une erreur d'index
+                    if (firestoreError.message && firestoreError.message.includes('index')) {
+                        const error = new Error('Index Firestore manquant. Cliquez sur le lien dans la console pour créer l\'index.');
+                        error.type = 'INDEX_REQUIRED';
+                        error.originalError = firestoreError;
+                        throw error;
+                    }
+                    
+                    throw firestoreError;
+                }
+
+                const availableDrivers = [];
+                let totalDrivers = 0;
+                let onlineDrivers = 0;
+                let driversWithLocation = 0;
+
+                driversSnapshot.forEach(doc => {
+                    totalDrivers++;
+                    const driver = doc.data();
+                    
+                    // Vérifier que le chauffeur est en ligne
+                    if (!driver.isOnline || driver.isOnline !== true) {
+                        return; // Passer au suivant
+                    }
+                    onlineDrivers++;
+                    
+                    // Vérifier que le chauffeur a une localisation
+                    if (!driver.location || !driver.location.lat || !driver.location.lng) {
+                        return; // Passer au suivant
+                    }
+                    driversWithLocation++;
+                    
+                    // Vérifier le statut (approuvé ou actif) - optionnel pour l'instant
+                    // if (driver.status && driver.status !== 'approved' && driver.status !== 'active') {
+                    //     return; // Passer au suivant si le statut n'est pas bon
+                    // }
+
+                    // Vérifier le type de service si spécifié
+                    if (taxiType && driver.serviceType) {
+                        const driverType = (driver.serviceType || '').toUpperCase();
+                        const requestedType = (taxiType || '').toUpperCase();
+                        if (driverType !== requestedType) {
+                            return; // Type ne correspond pas
+                        }
+                    }
+
+                    // Calculer la distance
+                    const distance = calculateDistance(
+                        pickupLocation.latitude,
+                        pickupLocation.longitude,
+                        driver.location.lat,
+                        driver.location.lng
+                    );
+
+                    availableDrivers.push({
+                        driverId: doc.id,
+                        firstName: driver.firstName || '',
+                        lastName: driver.lastName || '',
+                        phone: driver.phone || '',
+                        serviceType: driver.serviceType || 'simple',
+                        vehicleBrand: driver.vehicleBrand || '',
+                        vehicleColor: driver.vehicleColor || '',
+                        location: driver.location,
+                        distance: Math.round(distance * 10) / 10 // Arrondir à 1 décimale
+                    });
+                });
+
+                console.log('📊 Statistiques de recherche:', {
+                    total: totalDrivers,
+                    enLigne: onlineDrivers,
+                    avecLocalisation: driversWithLocation,
+                    disponibles: availableDrivers.length
+                });
+
+                // Trier par distance (plus proche en premier)
+                availableDrivers.sort((a, b) => a.distance - b.distance);
+
+                // Limiter le nombre de résultats
+                return availableDrivers.slice(0, limit);
+            } catch (error) {
+                console.error('❌ Erreur recherche chauffeurs Firebase:', error);
+                console.error('Détails de l\'erreur:', {
+                    message: error.message,
+                    code: error.code,
+                    type: error.type,
+                    stack: error.stack
+                });
+                throw error;
+            }
+        }
+
+        // ============================================
         // Gestion du Formulaire de Réservation - Trouver un véhicule
         // ============================================
         const bookingForm = document.getElementById('bookingForm');
@@ -4434,23 +4659,10 @@
                 submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Recherche en cours...';
                 
                 try {
-                    // Appeler l'API publique pour trouver tous les chauffeurs disponibles
-                    const response = await fetch(`${API_BASE_URL}/drivers/available`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            pickupLocation: pickupLocation,
-                            taxiType: mappedTaxiType, // Utiliser le type mappé en majuscules
-                            limit: 10 // Limiter à 10 véhicules
-                        })
-                    });
+                    // Rechercher les chauffeurs disponibles via Firebase
+                    const drivers = await findAvailableDrivers(pickupLocation, mappedTaxiType, 10);
 
-                    const result = await response.json();
-
-                    if (response.ok && result.success) {
-                        const drivers = result.drivers || [];
+                    if (drivers && drivers.length > 0) {
                         
                         if (drivers.length > 0) {
                             // Afficher la liste des véhicules
@@ -4547,28 +4759,55 @@
                             }, 500);
                         }
                     } else {
-                        alert(result.error || 'Erreur lors de la recherche. Veuillez réessayer.');
-                        
-                        // Masquer la section véhicule sélectionné avec bouton d'appel
-                        if (selectedVehicleDiv) {
-                            selectedVehicleDiv.innerHTML = `
-                                <div class="text-center py-6">
-                                    <div class="mb-4">
-                                        <i class="fas fa-exclamation-triangle text-4xl text-yellow-300 mb-3"></i>
-                                        <p class="text-green-200 text-sm mb-2">Erreur lors de la recherche</p>
-                                        <p class="text-green-300 text-xs mb-4">Contactez-nous directement pour réserver</p>
-                                    </div>
-                                    <a href="tel:+22787776776" class="inline-flex items-center justify-center px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-600 hover:to-emerald-700 transition transform hover:scale-105 shadow-lg">
-                                        <i class="fas fa-phone mr-2"></i>
-                                        Appeler le 87 77 67 76
-                                    </a>
-                                </div>
-                            `;
-                        }
+                        // Aucun véhicule trouvé - déjà géré dans le code ci-dessus
                     }
                 } catch (error) {
-                    console.error('Erreur lors de la recherche:', error);
-                    alert('Erreur de connexion au serveur. Veuillez vérifier que le backend est démarré ou appeler le 87 77 67 76 pour réserver.');
+                    console.error('❌ Erreur lors de la recherche:', error);
+                    
+                    // Message d'erreur personnalisé selon le type d'erreur
+                    let errorMessage = 'Erreur lors de la recherche de véhicules.';
+                    let errorDetails = '';
+                    
+                    if (error.type === 'FIREBASE_NOT_INITIALIZED') {
+                        errorMessage = 'Firebase n\'est pas initialisé.';
+                        errorDetails = 'Veuillez rafraîchir la page (F5) et réessayer.';
+                    } else if (error.type === 'PERMISSION_DENIED') {
+                        errorMessage = 'Erreur de permissions Firestore.';
+                        errorDetails = 'Vérifiez les règles Firestore dans la console Firebase. Ouvrez la console (F12) pour plus de détails.';
+                    } else if (error.type === 'INDEX_REQUIRED') {
+                        errorMessage = 'Index Firestore manquant.';
+                        errorDetails = 'Ouvrez la console (F12) et cliquez sur le lien pour créer l\'index automatiquement.';
+                    } else if (error.code === 'permission-denied' || error.message?.includes('permission')) {
+                        errorMessage = 'Permissions Firestore insuffisantes.';
+                        errorDetails = 'Les règles Firestore bloquent l\'accès. Vérifiez les règles dans Firebase Console.';
+                    } else if (error.message?.includes('index')) {
+                        errorMessage = 'Index Firestore requis.';
+                        errorDetails = 'Ouvrez la console (F12) pour voir le lien de création d\'index.';
+                    } else {
+                        errorMessage = 'Erreur lors de la recherche.';
+                        errorDetails = `Erreur: ${error.message || 'Erreur inconnue'}. Ouvrez la console (F12) pour plus de détails.`;
+                    }
+                    
+                    // Afficher un message d'erreur détaillé
+                    alert(`${errorMessage}\n\n${errorDetails}\n\nEn cas de problème persistant, appelez le 87 77 67 76 pour réserver.`);
+                    
+                    // Masquer la section véhicule sélectionné avec bouton d'appel
+                    if (selectedVehicleDiv) {
+                        selectedVehicleDiv.innerHTML = `
+                            <div class="text-center py-6">
+                                <div class="mb-4">
+                                    <i class="fas fa-exclamation-triangle text-4xl text-yellow-300 mb-3"></i>
+                                    <p class="text-green-200 text-sm mb-2 font-semibold">${errorMessage}</p>
+                                    <p class="text-green-300 text-xs mb-2">${errorDetails}</p>
+                                    <p class="text-green-200 text-xs mt-4">Ouvrez la console (F12) pour voir les détails de l'erreur.</p>
+                                </div>
+                                <a href="tel:+22787776776" class="inline-flex items-center justify-center px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-600 hover:to-emerald-700 transition transform hover:scale-105 shadow-lg">
+                                    <i class="fas fa-phone mr-2"></i>
+                                    Appeler le 87 77 67 76
+                                </a>
+                            </div>
+                        `;
+                    }
                 } finally {
                     // Réactiver le bouton
                     submitBtn.disabled = false;
@@ -4613,23 +4852,10 @@
                     submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i>Recherche en cours...';
                     
                     try {
-                        // Appeler l'API publique pour trouver tous les chauffeurs disponibles
-                        const response = await fetch(`${API_BASE_URL}/drivers/available`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                                pickupLocation: pickupLocation,
-                                taxiType: mappedTaxiType,
-                                limit: 10
-                            })
-                        });
+                        // Rechercher les chauffeurs disponibles via Firebase
+                        const drivers = await findAvailableDrivers(pickupLocation, mappedTaxiType, 10);
 
-                        const result = await response.json();
-
-                        if (response.ok && result.success) {
-                            const drivers = result.drivers || [];
+                        if (drivers && drivers.length > 0) {
                             
                             if (drivers.length > 0) {
                                 // Afficher la liste des véhicules
@@ -4717,28 +4943,55 @@
                                 alert('Aucun chauffeur disponible pour le moment. Un bouton d\'appel est disponible ci-dessous.');
                             }
                         } else {
-                            alert(result.error || 'Erreur lors de la recherche. Veuillez réessayer.');
-                            
-                            // Masquer la section véhicule sélectionné avec bouton d'appel
-                            if (selectedVehicleDiv) {
-                                selectedVehicleDiv.innerHTML = `
-                                    <div class="text-center py-6">
-                                        <div class="mb-4">
-                                            <i class="fas fa-exclamation-triangle text-4xl text-yellow-300 mb-3"></i>
-                                            <p class="text-green-200 text-sm mb-2">Erreur lors de la recherche</p>
-                                            <p class="text-green-300 text-xs mb-4">Contactez-nous directement pour réserver</p>
-                                        </div>
-                                        <a href="tel:+22787776776" class="inline-flex items-center justify-center px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-600 hover:to-emerald-700 transition transform hover:scale-105 shadow-lg">
-                                            <i class="fas fa-phone mr-2"></i>
-                                            Appeler le 87 77 67 76
-                                        </a>
-                                    </div>
-                                `;
-                            }
+                            // Aucun véhicule trouvé - déjà géré dans le code ci-dessus
                         }
                     } catch (error) {
-                        console.error('Erreur lors de la recherche:', error);
-                        alert('Erreur de connexion au serveur. Veuillez vérifier que le backend est démarré ou appeler le 87 77 67 76 pour réserver.');
+                        console.error('❌ Erreur lors de la recherche:', error);
+                        
+                        // Message d'erreur personnalisé selon le type d'erreur
+                        let errorMessage = 'Erreur lors de la recherche de véhicules.';
+                        let errorDetails = '';
+                        
+                        if (error.type === 'FIREBASE_NOT_INITIALIZED') {
+                            errorMessage = 'Firebase n\'est pas initialisé.';
+                            errorDetails = 'Veuillez rafraîchir la page (F5) et réessayer.';
+                        } else if (error.type === 'PERMISSION_DENIED') {
+                            errorMessage = 'Erreur de permissions Firestore.';
+                            errorDetails = 'Vérifiez les règles Firestore dans la console Firebase. Ouvrez la console (F12) pour plus de détails.';
+                        } else if (error.type === 'INDEX_REQUIRED') {
+                            errorMessage = 'Index Firestore manquant.';
+                            errorDetails = 'Ouvrez la console (F12) et cliquez sur le lien pour créer l\'index automatiquement.';
+                        } else if (error.code === 'permission-denied' || error.message?.includes('permission')) {
+                            errorMessage = 'Permissions Firestore insuffisantes.';
+                            errorDetails = 'Les règles Firestore bloquent l\'accès. Vérifiez les règles dans Firebase Console.';
+                        } else if (error.message?.includes('index')) {
+                            errorMessage = 'Index Firestore requis.';
+                            errorDetails = 'Ouvrez la console (F12) pour voir le lien de création d\'index.';
+                        } else {
+                            errorMessage = 'Erreur lors de la recherche.';
+                            errorDetails = `Erreur: ${error.message || 'Erreur inconnue'}. Ouvrez la console (F12) pour plus de détails.`;
+                        }
+                        
+                        // Afficher un message d'erreur détaillé
+                        alert(`${errorMessage}\n\n${errorDetails}\n\nEn cas de problème persistant, appelez le 87 77 67 76 pour réserver.`);
+                        
+                        // Masquer la section véhicule sélectionné avec bouton d'appel
+                        if (selectedVehicleDiv) {
+                            selectedVehicleDiv.innerHTML = `
+                                <div class="text-center py-6">
+                                    <div class="mb-4">
+                                        <i class="fas fa-exclamation-triangle text-4xl text-yellow-300 mb-3"></i>
+                                        <p class="text-green-200 text-sm mb-2 font-semibold">${errorMessage}</p>
+                                        <p class="text-green-300 text-xs mb-2">${errorDetails}</p>
+                                        <p class="text-green-200 text-xs mt-4">Ouvrez la console (F12) pour voir les détails de l'erreur.</p>
+                                    </div>
+                                    <a href="tel:+22787776776" class="inline-flex items-center justify-center px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-lg font-semibold hover:from-green-600 hover:to-emerald-700 transition transform hover:scale-105 shadow-lg">
+                                        <i class="fas fa-phone mr-2"></i>
+                                        Appeler le 87 77 67 76
+                                    </a>
+                                </div>
+                            `;
+                        }
                     } finally {
                         // Réactiver le bouton
                         submitBtn.disabled = false;
