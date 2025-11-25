@@ -1,15 +1,8 @@
 {
-  "version": 2,
-  "builds": [
+  "rewrites": [
     {
-      "src": "Dréba VTC.html",
-      "use": "@vercel/static"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/Dréba VTC.html"
+      "source": "/(.*)",
+      "destination": "/Dréba VTC.html"
     }
   ],
   "headers": [
