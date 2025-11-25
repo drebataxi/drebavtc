@@ -4108,6 +4108,13 @@
 
                 // Connexion via Firebase
                 try {
+                    // Vérifier que Firebase est initialisé
+                    if (typeof db === 'undefined' || !db) {
+                        alert('Erreur: Firebase n\'est pas initialisé. Veuillez rafraîchir la page.');
+                        console.error('❌ Firebase db n\'est pas défini');
+                        return;
+                    }
+
                     // Rechercher le chauffeur par numéro de téléphone
                     const driversSnapshot = await db.collection('drivers')
                         .where('phone', '==', phone)
@@ -4115,7 +4122,8 @@
                         .get();
 
                     if (driversSnapshot.empty) {
-                        alert('Erreur: Numéro de téléphone ou code PIN incorrect.');
+                        alert('Erreur: Numéro de téléphone ou code PIN incorrect.\n\nVérifiez que vous avez bien créé un compte avec ce numéro.');
+                        console.log('❌ Aucun chauffeur trouvé avec le numéro:', phone);
                         return;
                     }
 
@@ -4123,13 +4131,17 @@
                     const driverData = driverDoc.data();
 
                     // Vérifier le code PIN
-                    if (driverData.pin !== pin) {
-                        alert('Erreur: Numéro de téléphone ou code PIN incorrect.');
+                    if (!driverData.pin || driverData.pin !== pin) {
+                        alert('Erreur: Numéro de téléphone ou code PIN incorrect.\n\nVérifiez votre code PIN et réessayez.');
+                        console.log('❌ PIN incorrect. Attendu:', driverData.pin, 'Reçu:', pin);
                         return;
                     }
+                    
+                    console.log('✅ PIN correct, connexion en cours...');
 
                     // Connexion réussie
-                    currentDriverId = driverData.driverId;
+                    // Utiliser l'ID du document Firestore (qui est le driverId)
+                    currentDriverId = driverDoc.id;
 
                     // Mettre à jour le statut de connexion
                     await db.collection('drivers').doc(currentDriverId).update({
@@ -4184,8 +4196,13 @@
                         driverLoginForm.reset();
                     }
                 } catch (error) {
-                    console.error('❌ Erreur:', error);
-                    alert('Erreur de connexion au serveur. Veuillez réessayer plus tard.\n\nErreur: ' + error.message);
+                    console.error('❌ Erreur de connexion:', error);
+                    console.error('Détails de l\'erreur:', {
+                        message: error.message,
+                        code: error.code,
+                        stack: error.stack
+                    });
+                    alert('Erreur de connexion au serveur. Veuillez réessayer plus tard.\n\nErreur: ' + error.message + '\n\nOuvrez la console (F12) pour plus de détails.');
                 }
             });
         }
@@ -4905,14 +4922,43 @@
             }
         });
     </script>
-    <!-- Configuration Firebase - Chargé en premier -->
-    <script src="firebase-config.js"></script>
+    <!-- Configuration Firebase - Intégrée directement -->
+    <script>
+        // Configuration Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyCF55ufr-zZ3K-b6FlIUAEcjsicbXmNZo8",
+            authDomain: "dreba-vtc-niger.firebaseapp.com",
+            projectId: "dreba-vtc-niger",
+            storageBucket: "dreba-vtc-niger.firebasestorage.app",
+            messagingSenderId: "307924459980",
+            appId: "1:307924459980:web:025fab54728dfa01e7bd69",
+            measurementId: "G-F3ZJFEPZHF"
+        };
+
+        // Initialiser Firebase
+        try {
+            firebase.initializeApp(firebaseConfig);
+            console.log('✅ Firebase initialisé avec succès');
+        } catch (error) {
+            console.error('❌ Erreur initialisation Firebase:', error);
+        }
+
+        // Initialiser Firestore (base de données)
+        const db = firebase.firestore();
+
+        // Initialiser Auth (authentification)
+        const auth = firebase.auth();
+        
+        // Vérifier que Firebase est bien initialisé
+        if (typeof db !== 'undefined') {
+            console.log('✅ Firestore (db) est disponible');
+        } else {
+            console.error('❌ Firestore (db) n\'est pas disponible');
+        }
+    </script>
     <!-- Leaflet JS pour OpenStreetMap - Chargé à la fin pour garantir le chargement -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <script>
-        // Firebase est maintenant initialisé via firebase-config.js
-        // Les variables globales db et auth sont disponibles
-        
         // Variables globales
         let currentDriverId = null;
         
@@ -4925,6 +4971,29 @@
         function getCurrentTimestamp() {
             return firebase.firestore.FieldValue.serverTimestamp();
         }
+        
+        // Fonction de débogage pour vérifier Firebase
+        function checkFirebaseConnection() {
+            console.log('🔍 Vérification de Firebase...');
+            console.log('Firebase disponible:', typeof firebase !== 'undefined');
+            console.log('Firestore (db) disponible:', typeof db !== 'undefined');
+            
+            if (typeof db !== 'undefined') {
+                // Tester une requête simple
+                db.collection('drivers').limit(1).get()
+                    .then(() => {
+                        console.log('✅ Connexion Firestore fonctionne');
+                    })
+                    .catch((error) => {
+                        console.error('❌ Erreur connexion Firestore:', error);
+                    });
+            }
+        }
+        
+        // Vérifier Firebase au chargement de la page
+        window.addEventListener('load', () => {
+            setTimeout(checkFirebaseConnection, 1000);
+        });
     </script>
     <script>
         // Initialiser la carte après que Leaflet soit chargé
