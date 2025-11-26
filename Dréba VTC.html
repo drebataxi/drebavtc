@@ -4240,10 +4240,8 @@
                                     // Démarrer le suivi de localisation
                                     startLocationTracking(currentDriverId);
 
-                                    alert(`Connexion réussie !\n\nBienvenue ${driverData.firstName} ${driverData.lastName}\nID: ${driverData.driverId}\n\nVotre localisation est maintenant partagée.`);
-                                    driverLoginModal.classList.add('hidden');
-                                    driverLoginForm.reset();
-                                    showDriverStatusNotification(true);
+                                    // Rediriger vers le tableau de bord du chauffeur
+                                    window.location.href = `driver-dashboard.html?driverId=${currentDriverId}`;
                                 },
                                 (error) => {
                                     alert('Impossible d\'accéder à votre localisation. Veuillez autoriser l\'accès à la géolocalisation dans les paramètres de votre navigateur.');
@@ -4260,9 +4258,9 @@
                         }
                     } else {
                         // Connexion sans partage de localisation
-                        alert(`Connexion réussie !\n\nBienvenue ${driverData.firstName} ${driverData.lastName}\nID: ${driverData.driverId}\n\nNote: Vous ne recevrez pas de courses sans partage de localisation.`);
-                        driverLoginModal.classList.add('hidden');
-                        driverLoginForm.reset();
+                        // Rediriger quand même vers le tableau de bord
+                        // L'utilisateur pourra activer le partage de localisation depuis là
+                        window.location.href = `driver-dashboard.html?driverId=${currentDriverId}`;
                     }
                 } catch (error) {
                     console.error('❌ Erreur de connexion:', error);

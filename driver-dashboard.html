@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tableau de Bord Chauffeur - Dréba VTC</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <style>
+        * {
+            font-family: 'Inter', sans-serif;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .online-indicator {
+            animation: pulse 2s infinite;
+        }
+        
+        .drawer-overlay {
+            transition: opacity 0.3s ease;
+        }
+        
+        .drawer {
+            transition: transform 0.3s ease;
+        }
+        
+        .drawer-hidden {
+            transform: translateX(-100%);
+        }
+        
+        .custom-marker {
+            background: transparent;
+            border: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-50">
+    <!-- Navbar -->
+    <nav class="bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg">
+        <div class="container mx-auto px-4 py-3">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <button id="menuBtn" class="text-white hover:text-green-200 transition" title="Ouvrir le menu">
+                        <i class="fas fa-bars text-xl"></i>
+                    </button>
+                    <h1 class="text-xl font-bold">Dréba VTC - Chauffeur</h1>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div id="driverName" class="text-sm font-semibold">Chargement...</div>
+                    <button id="logoutBtn" class="bg-white text-green-600 px-4 py-2 rounded-lg hover:bg-green-50 transition font-semibold">
+                        <i class="fas fa-sign-out-alt mr-2"></i>Déconnexion
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Menu Latéral (Drawer) -->
+    <div id="drawerOverlay" class="drawer-overlay fixed inset-0 bg-black bg-opacity-50 z-40 hidden" onclick="closeDrawer()"></div>
+    <div id="drawer" class="drawer drawer-hidden fixed left-0 top-0 h-full w-80 bg-white shadow-2xl z-50 overflow-y-auto">
+        <div class="p-6 bg-gradient-to-br from-green-600 to-emerald-600 text-white">
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-2xl font-bold">Menu</h2>
+                <button onclick="closeDrawer()" class="text-white hover:text-green-200" title="Fermer le menu">
+                    <i class="fas fa-times text-xl"></i>
+                </button>
+            </div>
+            <div class="flex items-center space-x-4 mb-6">
+                <div class="w-16 h-16 bg-white rounded-full flex items-center justify-center">
+                    <i class="fas fa-user text-green-600 text-2xl"></i>
+                </div>
+                <div>
+                    <div id="drawerDriverName" class="font-bold text-lg">Chargement...</div>
+                    <div id="drawerDriverPhone" class="text-green-100 text-sm">+227...</div>
+                </div>
+            </div>
+        </div>
+        <div class="py-4">
+            <a href="#" onclick="showSection('dashboard'); closeDrawer(); return false;" class="menu-item flex items-center px-6 py-4 hover:bg-gray-100 transition">
+                <i class="fas fa-home text-green-600 w-6"></i>
+                <span class="ml-4 font-medium">Tableau de bord</span>
+            </a>
+            <a href="#" onclick="showSection('rides'); closeDrawer(); return false;" class="menu-item flex items-center px-6 py-4 hover:bg-gray-100 transition">
+                <i class="fas fa-list text-green-600 w-6"></i>
+                <span class="ml-4 font-medium">Mes courses</span>
+            </a>
+            <a href="#" onclick="showSection('history'); closeDrawer(); return false;" class="menu-item flex items-center px-6 py-4 hover:bg-gray-100 transition">
+                <i class="fas fa-history text-green-600 w-6"></i>
+                <span class="ml-4 font-medium">Historique</span>
+            </a>
+            <a href="#" onclick="showSection('stats'); closeDrawer(); return false;" class="menu-item flex items-center px-6 py-4 hover:bg-gray-100 transition">
+                <i class="fas fa-chart-line text-green-600 w-6"></i>
+                <span class="ml-4 font-medium">Statistiques</span>
+            </a>
+            <a href="#" onclick="showSection('profile'); closeDrawer(); return false;" class="menu-item flex items-center px-6 py-4 hover:bg-gray-100 transition">
+                <i class="fas fa-user-circle text-green-600 w-6"></i>
+                <span class="ml-4 font-medium">Mon profil</span>
+            </a>
+            <a href="#" onclick="showSection('settings'); closeDrawer(); return false;" class="menu-item flex items-center px-6 py-4 hover:bg-gray-100 transition">
+                <i class="fas fa-cog text-green-600 w-6"></i>
+                <span class="ml-4 font-medium">Paramètres</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Contenu Principal -->
+    <div class="container mx-auto px-4 py-6">
+        <!-- Section Tableau de Bord (par défaut) -->
+        <div id="dashboardSection" class="section">
+            <!-- Bouton En ligne/Hors ligne -->
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-4">
+                        <div id="onlineStatus" class="w-4 h-4 rounded-full bg-gray-400 online-indicator"></div>
+                        <div>
+                            <div class="font-bold text-lg" id="statusText">Hors ligne</div>
+                            <div class="text-sm text-gray-600" id="statusSubtext">Activez pour recevoir des courses</div>
+                        </div>
+                    </div>
+                    <button id="toggleOnlineBtn" class="bg-gray-400 text-white px-6 py-3 rounded-lg font-semibold hover:bg-gray-500 transition">
+                        <i class="fas fa-power-off mr-2"></i>Se mettre en ligne
+                    </button>
+                </div>
+            </div>
+
+            <!-- Statistiques Rapides -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-gray-600 text-sm">Courses acceptées</div>
+                            <div class="text-2xl font-bold text-green-600" id="acceptedRides">0</div>
+                        </div>
+                        <div class="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
+                            <i class="fas fa-check-circle text-green-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-gray-600 text-sm">Courses refusées</div>
+                            <div class="text-2xl font-bold text-red-600" id="rejectedRides">0</div>
+                        </div>
+                        <div class="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
+                            <i class="fas fa-times-circle text-red-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-gray-600 text-sm">Gains totaux</div>
+                            <div class="text-2xl font-bold text-blue-600" id="totalEarnings">0 FCFA</div>
+                        </div>
+                        <div class="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                            <i class="fas fa-money-bill-wave text-blue-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+                <div class="bg-white rounded-lg shadow-lg p-6">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="text-gray-600 text-sm">Note moyenne</div>
+                            <div class="text-2xl font-bold text-yellow-600" id="averageRating">5.0</div>
+                        </div>
+                        <div class="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center">
+                            <i class="fas fa-star text-yellow-600 text-xl"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Carte -->
+            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                <h2 class="text-xl font-bold mb-4">Ma position</h2>
+                <div id="driverMap" style="height: 400px; width: 100%; border-radius: 8px;"></div>
+            </div>
+
+            <!-- Demandes de course en temps réel -->
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xl font-bold">Nouvelles demandes</h2>
+                    <div id="requestsCount" class="bg-green-600 text-white px-3 py-1 rounded-full text-sm font-semibold">0</div>
+                </div>
+                <div id="rideRequestsList" class="space-y-4">
+                    <!-- Les demandes seront ajoutées ici dynamiquement -->
+                    <div class="text-center text-gray-500 py-8">
+                        <i class="fas fa-taxi text-4xl mb-4"></i>
+                        <p>Aucune demande pour le moment</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Section Mes Courses -->
+        <div id="ridesSection" class="section hidden">
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4">Mes courses</h2>
+                <div id="myRidesList" class="space-y-4">
+                    <!-- Les courses seront ajoutées ici -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Section Historique -->
+        <div id="historySection" class="section hidden">
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4">Historique des courses</h2>
+                <div id="historyList" class="space-y-4">
+                    <!-- L'historique sera ajouté ici -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Section Statistiques -->
+        <div id="statsSection" class="section hidden">
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4">Statistiques détaillées</h2>
+                <div id="detailedStats" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Les statistiques seront ajoutées ici -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Section Profil -->
+        <div id="profileSection" class="section hidden">
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4">Mon profil</h2>
+                <div id="profileContent">
+                    <!-- Le profil sera chargé ici -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Section Paramètres -->
+        <div id="settingsSection" class="section hidden">
+            <div class="bg-white rounded-lg shadow-lg p-6">
+                <h2 class="text-xl font-bold mb-4">Paramètres</h2>
+                <div id="settingsContent">
+                    <!-- Les paramètres seront ajoutés ici -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyCF55ufr-zZ3K-b6FlIUAEcjsicbXmNZo8",
+            authDomain: "dreba-vtc-niger.firebaseapp.com",
+            projectId: "dreba-vtc-niger",
+            storageBucket: "dreba-vtc-niger.firebasestorage.app",
+            messagingSenderId: "307924459980",
+            appId: "1:307924459980:web:025fab54728dfa01e7bd69",
+            measurementId: "G-F3ZJFEPZHF"
+        };
+
+        // Initialiser Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        // Variables globales
+        let currentDriverId = null;
+        let driverData = null;
+        let driverMap = null;
+        let driverMarker = null;
+        let locationWatch = null;
+        let isOnline = false;
+        let rideRequestsListener = null;
+
+        // Récupérer l'ID du chauffeur depuis l'URL
+        function getDriverIdFromURL() {
+            const params = new URLSearchParams(window.location.search);
+            return params.get('driverId');
+        }
+
+        // Vérifier si le chauffeur est connecté
+        async function checkDriverSession() {
+            const driverId = getDriverIdFromURL();
+            if (!driverId) {
+                alert('Session expirée. Veuillez vous reconnecter.');
+                window.location.href = 'Dréba VTC.html';
+                return;
+            }
+
+            try {
+                const driverDoc = await db.collection('drivers').doc(driverId).get();
+                if (!driverDoc.exists) {
+                    alert('Chauffeur introuvable. Veuillez vous reconnecter.');
+                    window.location.href = 'Dréba VTC.html';
+                    return;
+                }
+
+                currentDriverId = driverId;
+                driverData = driverDoc.data();
+                isOnline = driverData.isOnline || false;
+
+                // Afficher les informations du chauffeur
+                displayDriverInfo();
+                initializeMap();
+                loadDriverStats();
+                setupRideRequestsListener();
+                updateOnlineStatus();
+
+            } catch (error) {
+                console.error('Erreur lors de la vérification de session:', error);
+                alert('Erreur lors du chargement. Veuillez réessayer.');
+            }
+        }
+
+        // Afficher les informations du chauffeur
+        function displayDriverInfo() {
+            const name = `${driverData.firstName || ''} ${driverData.lastName || ''}`.trim();
+            document.getElementById('driverName').textContent = name;
+            document.getElementById('drawerDriverName').textContent = name;
+            document.getElementById('drawerDriverPhone').textContent = `+227${driverData.phone || ''}`;
+        }
+
+        // Initialiser la carte
+        function initializeMap() {
+            const defaultLat = driverData.location?.lat || 13.5127;
+            const defaultLng = driverData.location?.lng || 2.1124;
+
+            driverMap = L.map('driverMap').setView([defaultLat, defaultLng], 15);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19
+            }).addTo(driverMap);
+
+            // Ajouter le marqueur du chauffeur
+            const driverIcon = L.divIcon({
+                className: 'custom-marker',
+                html: `<div style="background: #10b981; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 18px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 3px solid white;">
+                    <i class="fas fa-taxi"></i>
+                </div>`,
+                iconSize: [40, 40],
+                iconAnchor: [20, 20]
+            });
+
+            driverMarker = L.marker([defaultLat, defaultLng], { icon: driverIcon })
+                .addTo(driverMap)
+                .bindPopup(`<strong>${driverData.firstName} ${driverData.lastName}</strong><br>Votre position`);
+        }
+
+        // Démarrer le suivi de localisation
+        function startLocationTracking() {
+            if (!navigator.geolocation) {
+                alert('La géolocalisation n\'est pas supportée par votre navigateur.');
+                return;
+            }
+
+            locationWatch = navigator.geolocation.watchPosition(
+                async (position) => {
+                    const lat = position.coords.latitude;
+                    const lng = position.coords.longitude;
+
+                    // Mettre à jour le marqueur sur la carte
+                    if (driverMarker) {
+                        driverMarker.setLatLng([lat, lng]);
+                        driverMap.setView([lat, lng], driverMap.getZoom());
+                    }
+
+                    // Mettre à jour dans Firestore
+                    try {
+                        await db.collection('drivers').doc(currentDriverId).update({
+                            location: {
+                                lat: lat,
+                                lng: lng
+                            },
+                            locationUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                    } catch (error) {
+                        console.error('Erreur mise à jour localisation:', error);
+                    }
+                },
+                (error) => {
+                    console.error('Erreur géolocalisation:', error);
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                }
+            );
+        }
+
+        // Arrêter le suivi de localisation
+        function stopLocationTracking() {
+            if (locationWatch !== null) {
+                navigator.geolocation.clearWatch(locationWatch);
+                locationWatch = null;
+            }
+        }
+
+        // Toggle en ligne/hors ligne
+        document.getElementById('toggleOnlineBtn').addEventListener('click', async function() {
+            try {
+                const newStatus = !isOnline;
+                await db.collection('drivers').doc(currentDriverId).update({
+                    isOnline: newStatus,
+                    statusUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                isOnline = newStatus;
+                updateOnlineStatus();
+
+                if (newStatus) {
+                    startLocationTracking();
+                } else {
+                    stopLocationTracking();
+                }
+            } catch (error) {
+                console.error('Erreur changement statut:', error);
+                alert('Erreur lors du changement de statut.');
+            }
+        });
+
+        // Mettre à jour l'affichage du statut
+        function updateOnlineStatus() {
+            const statusIndicator = document.getElementById('onlineStatus');
+            const statusText = document.getElementById('statusText');
+            const statusSubtext = document.getElementById('statusSubtext');
+            const toggleBtn = document.getElementById('toggleOnlineBtn');
+
+            if (isOnline) {
+                statusIndicator.className = 'w-4 h-4 rounded-full bg-green-500 online-indicator';
+                statusText.textContent = 'En ligne';
+                statusSubtext.textContent = 'Vous recevez des demandes de course';
+                toggleBtn.className = 'bg-red-500 text-white px-6 py-3 rounded-lg font-semibold hover:bg-red-600 transition';
+                toggleBtn.innerHTML = '<i class="fas fa-power-off mr-2"></i>Se mettre hors ligne';
+            } else {
+                statusIndicator.className = 'w-4 h-4 rounded-full bg-gray-400';
+                statusText.textContent = 'Hors ligne';
+                statusSubtext.textContent = 'Activez pour recevoir des courses';
+                toggleBtn.className = 'bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 transition';
+                toggleBtn.innerHTML = '<i class="fas fa-power-off mr-2"></i>Se mettre en ligne';
+            }
+        }
+
+        // Charger les statistiques du chauffeur
+        async function loadDriverStats() {
+            try {
+                // Compter les courses acceptées
+                const acceptedSnapshot = await db.collection('bookings')
+                    .where('driverId', '==', currentDriverId)
+                    .where('status', '==', 'accepted')
+                    .get();
+                
+                // Compter les courses refusées
+                const rejectedSnapshot = await db.collection('bookings')
+                    .where('driverId', '==', currentDriverId)
+                    .where('status', '==', 'rejected')
+                    .get();
+
+                // Compter les courses complétées
+                const completedSnapshot = await db.collection('bookings')
+                    .where('driverId', '==', currentDriverId)
+                    .where('status', '==', 'completed')
+                    .get();
+
+                document.getElementById('acceptedRides').textContent = acceptedSnapshot.size;
+                document.getElementById('rejectedRides').textContent = rejectedSnapshot.size;
+                
+                // Calculer les gains (à adapter selon votre structure)
+                // Pour l'instant, on met 0
+                document.getElementById('totalEarnings').textContent = '0 FCFA';
+            } catch (error) {
+                console.error('Erreur chargement stats:', error);
+            }
+        }
+
+        // Écouter les nouvelles demandes de course
+        function setupRideRequestsListener() {
+            if (rideRequestsListener) {
+                rideRequestsListener();
+            }
+
+            rideRequestsListener = db.collection('bookings')
+                .where('status', '==', 'pending')
+                .onSnapshot((snapshot) => {
+                    const requestsList = document.getElementById('rideRequestsList');
+                    requestsList.innerHTML = '';
+
+                    if (snapshot.empty) {
+                        requestsList.innerHTML = `
+                            <div class="text-center text-gray-500 py-8">
+                                <i class="fas fa-taxi text-4xl mb-4"></i>
+                                <p>Aucune demande pour le moment</p>
+                            </div>
+                        `;
+                        document.getElementById('requestsCount').textContent = '0';
+                        return;
+                    }
+
+                    document.getElementById('requestsCount').textContent = snapshot.size;
+
+                    snapshot.forEach((doc) => {
+                        const request = doc.data();
+                        const requestCard = createRideRequestCard(doc.id, request);
+                        requestsList.appendChild(requestCard);
+                    });
+                });
+        }
+
+        // Créer une carte de demande de course
+        function createRideRequestCard(requestId, request) {
+            const card = document.createElement('div');
+            card.className = 'bg-gray-50 border-2 border-green-200 rounded-lg p-4 hover:border-green-400 transition';
+            
+            const pickupAddress = request.pickupAddress || 'Adresse non spécifiée';
+            const taxiType = request.taxiType || 'simple';
+            const clientPhone = request.clientPhone || 'N/A';
+            const distance = request.distance || 'N/A';
+
+            card.innerHTML = `
+                <div class="flex items-start justify-between mb-3">
+                    <div class="flex-1">
+                        <div class="flex items-center space-x-2 mb-2">
+                            <i class="fas fa-map-marker-alt text-green-600"></i>
+                            <span class="font-semibold">${pickupAddress}</span>
+                        </div>
+                        <div class="text-sm text-gray-600 space-y-1">
+                            <div><i class="fas fa-taxi mr-2"></i>Type: ${taxiType}</div>
+                            <div><i class="fas fa-phone mr-2"></i>Client: ${clientPhone}</div>
+                            ${distance !== 'N/A' ? `<div><i class="fas fa-route mr-2"></i>Distance: ${distance} km</div>` : ''}
+                        </div>
+                    </div>
+                    <div class="flex flex-col space-y-2">
+                        <button onclick="acceptRide('${requestId}')" class="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition font-semibold">
+                            <i class="fas fa-check mr-2"></i>Accepter
+                        </button>
+                        <button onclick="rejectRide('${requestId}')" class="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition font-semibold">
+                            <i class="fas fa-times mr-2"></i>Refuser
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            return card;
+        }
+
+        // Accepter une course
+        async function acceptRide(requestId) {
+            if (!confirm('Voulez-vous accepter cette course ?')) {
+                return;
+            }
+
+            try {
+                await db.collection('bookings').doc(requestId).update({
+                    status: 'accepted',
+                    driverId: currentDriverId,
+                    acceptedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                alert('Course acceptée !');
+                loadDriverStats();
+            } catch (error) {
+                console.error('Erreur acceptation course:', error);
+                alert('Erreur lors de l\'acceptation de la course.');
+            }
+        }
+
+        // Refuser une course
+        async function rejectRide(requestId) {
+            if (!confirm('Voulez-vous refuser cette course ?')) {
+                return;
+            }
+
+            try {
+                await db.collection('bookings').doc(requestId).update({
+                    status: 'rejected',
+                    rejectedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                alert('Course refusée.');
+                loadDriverStats();
+            } catch (error) {
+                console.error('Erreur refus course:', error);
+                alert('Erreur lors du refus de la course.');
+            }
+        }
+
+        // Fonctions globales pour les boutons
+        window.acceptRide = acceptRide;
+        window.rejectRide = rejectRide;
+
+        // Menu Drawer
+        document.getElementById('menuBtn').addEventListener('click', function() {
+            document.getElementById('drawerOverlay').classList.remove('hidden');
+            document.getElementById('drawer').classList.remove('drawer-hidden');
+        });
+
+        function closeDrawer() {
+            document.getElementById('drawerOverlay').classList.add('hidden');
+            document.getElementById('drawer').classList.add('drawer-hidden');
+        }
+
+        // Navigation entre sections
+        function showSection(sectionName) {
+            document.querySelectorAll('.section').forEach(section => {
+                section.classList.add('hidden');
+            });
+            document.getElementById(sectionName + 'Section').classList.remove('hidden');
+        }
+
+        // Déconnexion
+        document.getElementById('logoutBtn').addEventListener('click', async function() {
+            if (!confirm('Voulez-vous vous déconnecter ?')) {
+                return;
+            }
+
+            try {
+                // Mettre le chauffeur hors ligne
+                await db.collection('drivers').doc(currentDriverId).update({
+                    isOnline: false,
+                    lastLogout: firebase.firestore.FieldValue.serverTimestamp()
+                });
+
+                stopLocationTracking();
+                if (rideRequestsListener) {
+                    rideRequestsListener();
+                }
+
+                window.location.href = 'Dréba VTC.html';
+            } catch (error) {
+                console.error('Erreur déconnexion:', error);
+                window.location.href = 'Dréba VTC.html';
+            }
+        });
+
+        // Initialisation au chargement
+        window.addEventListener('load', function() {
+            checkDriverSession();
+        });
+    </script>
+</body>
+</html>
+
